@@ -1,0 +1,398 @@
+openapi: 3.1.0
+info:
+  title: Daraja Reliability Gateway
+  version: 0.1.0
+  description: >
+    Sandbox-only reliability layer between merchants and Safaricom Daraja
+    (STK Push C2B and B2C payouts), providing idempotency, a strict payment
+    state machine, raw callback ingestion, status polling/sweeping,
+    reconciliation, and HMAC-SHA256 signed merchant webhooks.
+
+servers:
+  - url: http://localhost:8000
+    description: Local development / Docker Compose sandbox gateway
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    PaymentState:
+      type: string
+      enum:
+        - created
+        - pending
+        - succeeded
+        - failed
+        - timed_out
+
+    PayoutState:
+      type: string
+      enum:
+        - created
+        - pending
+        - succeeded
+        - failed
+        - timed_out
+
+    ErrorEnvelope:
+      type: object
+      required:
+        - error_code
+        - message
+        - correlation_id
+      properties:
+        error_code:
+          type: string
+          example: IDEMPOTENCY_CONFLICT
+        message:
+          type: string
+          example: "Idempotency-Key was already used with a different request payload."
+        correlation_id:
+          type: string
+          example: "corr_9f8e7d6c5b4a"
+        details:
+          type: object
+          additionalProperties: true
+
+    CreatePaymentRequest:
+      type: object
+      required:
+        - amount
+        - currency
+        - phone_number
+        - account_reference
+        - callback_url
+      properties:
+        amount:
+          type: integer
+          minimum: 1
+          example: 250
+        currency:
+          type: string
+          enum: [KES]
+          example: KES
+        phone_number:
+          type: string
+          description: E.164 or MSISDN format (e.g., 254708374149)
+          example: "254708374149"
+        account_reference:
+          type: string
+          maxLength: 64
+          example: "INV-2026-0041"
+        description:
+          type: string
+          maxLength: 128
+          example: "Order #41 checkout"
+        callback_url:
+          type: string
+          format: uri
+          example: "https://merchant.example.test/webhooks/daraja-gateway"
+        metadata:
+          type: object
+          additionalProperties: true
+
+    PaymentResponse:
+      type: object
+      required:
+        - payment_id
+        - state
+        - amount
+        - currency
+        - phone_number
+        - account_reference
+        - created_at
+        - updated_at
+      properties:
+        payment_id:
+          type: string
+          example: "pay_01JDN9X8K2M4P6Q8R0S2T4V6W8"
+        state:
+          $ref: "#/components/schemas/PaymentState"
+        amount:
+          type: integer
+          example: 250
+        currency:
+          type: string
+          example: KES
+        phone_number:
+          type: string
+          example: "254708374149"
+        account_reference:
+          type: string
+          example: "INV-2026-0041"
+        merchant_request_id:
+          type: string
+          nullable: true
+          example: "29115-34620561-1"
+        checkout_request_id:
+          type: string
+          nullable: true
+          example: "ws_CO_25112026170000123456"
+        result_code:
+          type: string
+          nullable: true
+          example: "0"
+        result_desc:
+          type: string
+          nullable: true
+          example: "The service request is processed successfully."
+        mpesa_receipt_number:
+          type: string
+          nullable: true
+          example: "SWJ7X12345"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreatePayoutRequest:
+      type: object
+      required:
+        - amount
+        - currency
+        - recipient_phone
+        - command_id
+        - callback_url
+      properties:
+        amount:
+          type: integer
+          minimum: 1
+          example: 1500
+        currency:
+          type: string
+          enum: [KES]
+          example: KES
+        recipient_phone:
+          type: string
+          example: "254708374149"
+        command_id:
+          type: string
+          enum: [BusinessPayment, SalaryPayment, PromotionPayment]
+          example: BusinessPayment
+        remarks:
+          type: string
+          maxLength: 128
+          example: "Supplier settlement #19"
+        callback_url:
+          type: string
+          format: uri
+          example: "https://merchant.example.test/webhooks/daraja-gateway"
+
+    PayoutResponse:
+      type: object
+      required:
+        - payout_id
+        - state
+        - amount
+        - currency
+        - recipient_phone
+        - command_id
+        - created_at
+        - updated_at
+      properties:
+        payout_id:
+          type: string
+          example: "po_01JDN9Y1A3B5C7D9E1F3G5H7J9"
+        state:
+          $ref: "#/components/schemas/PayoutState"
+        amount:
+          type: integer
+          example: 1500
+        currency:
+          type: string
+          example: KES
+        recipient_phone:
+          type: string
+          example: "254708374149"
+        command_id:
+          type: string
+          example: BusinessPayment
+        conversation_id:
+          type: string
+          nullable: true
+          example: "AG_20261125_70004a1b2c3d"
+        originator_conversation_id:
+          type: string
+          nullable: true
+          example: "9f8e7d6c-5b4a-4321-8765-abcdef012345"
+        transaction_receipt:
+          type: string
+          nullable: true
+          example: "SWJ9P54321"
+        result_code:
+          type: string
+          nullable: true
+          example: "0"
+        result_desc:
+          type: string
+          nullable: true
+          example: "The service request is processed successfully."
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    MerchantWebhookEvent:
+      type: object
+      required:
+        - event_id
+        - event_type
+        - occurred_at
+        - resource_type
+        - resource_id
+        - state
+        - data
+      properties:
+        event_id:
+          type: string
+          example: "evt_01JDN9Z9M8N7B6V5C4X3Z2A1S0"
+        event_type:
+          type: string
+          enum:
+            - payment.succeeded
+            - payment.failed
+            - payment.timed_out
+            - payout.succeeded
+            - payout.failed
+            - payout.timed_out
+          example: payment.succeeded
+        occurred_at:
+          type: string
+          format: date-time
+        resource_type:
+          type: string
+          enum: [payment, payout]
+          example: payment
+        resource_id:
+          type: string
+          example: "pay_01JDN9X8K2M4P6Q8R0S2T4V6W8"
+        state:
+          type: string
+          example: succeeded
+        data:
+          oneOf:
+            - $ref: "#/components/schemas/PaymentResponse"
+            - $ref: "#/components/schemas/PayoutResponse"
+
+paths:
+  /payments:
+    post:
+      summary: Initiate an STK Push payment
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 255
+          description: Unique client-generated key per logical payment attempt.
+        - name: X-Correlation-ID
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePaymentRequest"
+      responses:
+        "201":
+          description: Payment created and STK Push dispatched (or replayed identically)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: Idempotency-Key reused with a different request payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /payments/{payment_id}:
+    get:
+      summary: Fetch authoritative payment state
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: payment_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Payment record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentResponse"
+        "404":
+          description: Payment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /payouts:
+    post:
+      summary: Initiate a B2C payout
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 255
+        - name: X-Correlation-ID
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePayoutRequest"
+      responses:
+        "201":
+          description: Payout created and B2C request dispatched (or replayed identically)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PayoutResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: Idempotency-Key reused with a different request payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
